@@ -30,8 +30,11 @@ export async function gitDiff(cwd, ref) {
 }
 
 export async function gitDiffWorktreeAgainstBase(worktreeCwd, baseRef) {
-  // Show every change on the worktree's HEAD relative to base, plus uncommitted edits.
-  const r = await runGit(['diff', baseRef], { cwd: worktreeCwd });
+  // Stage everything first — Kimi typically writes new files without committing,
+  // and `git diff` skips untracked files by default. Staging puts them in the
+  // index so the resulting diff captures the full set of changes.
+  await runGit(['add', '-A'], { cwd: worktreeCwd });
+  const r = await runGit(['diff', '--cached', baseRef], { cwd: worktreeCwd });
   if (r.code !== 0) throw new Error(`git diff failed: ${r.stderr.trim()}`);
   return r.stdout;
 }

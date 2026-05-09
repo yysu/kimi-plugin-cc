@@ -12,9 +12,9 @@ A Claude Code plugin that turns Kimi into your **delegate**: Claude plans, Kimi 
 
 | Command | Purpose |
 |---|---|
-| `/kimi:doctor` | Check `kimi-cli`, `git`, Node, and toggle the optional review gate. |
-| `/kimi:code <plan.md>` | Run Kimi inside a fresh worktree to implement a plan. |
-| `/kimi:review` | Kimi reviews a diff (current changes, a base branch, or a job's worktree). |
+| `/kimi:doctor` | Check `kimi-cli`, `git`, Node, kimi minimum version, and toggle the optional review gate. |
+| `/kimi:code <plan.md>` | Run Kimi inside a fresh worktree to implement a plan, then **auto-chain a review**. Pass `--no-review` to opt out. |
+| `/kimi:review [<plan.md>]` | Kimi reviews a diff. Pass `plan.md` to review the latest code job for that plan; otherwise reviews uncommitted changes. |
 | `/kimi:adversarial-review` | Same target selection, security/correctness-pressure-test posture. |
 | `/kimi:status` / `/kimi:result` / `/kimi:cancel` | Manage running and completed jobs. |
 
@@ -87,31 +87,37 @@ Schema: `plugins/kimi/schemas/plan.schema.json`.
 ## A typical run
 
 ```text
-# 1. You and Claude write a plan together.
-#    (No tooling needed; just a markdown file.)
+# 1. You and Claude write a plan together. (Just a markdown file.)
 $ cat plan.md
 
-# 2. Hand the plan to Kimi.
+# 2. Hand the plan off. ONE command does plan → code → review.
 /kimi:code plan.md
 
 #    → opens a worktree at ~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job>
-#    → spawns kimi --print --afk inside it
-#    → captures the diff and a DONE: / BLOCKED: contract line
+#    → Kimi (write-capable agent profile) implements the plan inside it
+#    → post-run audit checks no writes escaped the worktree
+#    → automatically runs Kimi (read-only agent profile) to review the diff
+#    → prints the verdict (pass / needs-attention / block) and exit code 0/1/2
 
-# 3. Have Kimi review its own work.
-/kimi:review --job <job-id>
-
-#    → fresh Kimi session (never resumed from the coder)
-#    → emits a structured JSON verdict (pass / needs-attention / block)
-
-# 4. Iterate on review feedback in the same worktree.
+# 3. Iterate on review feedback in the same worktree.
 /kimi:code plan.md --resume <job-id>
 
-# 5. Happy with it? Merge the worktree branch back yourself, your way.
+# 4. Happy with it? Merge the worktree branch back yourself.
 $ git merge kimi/<job-id>
 ```
 
-For long tasks, add `--background` to `code` and check in via `/kimi:status`.
+`plan.md` is the only handoff artifact you ever need to remember. Job ids are surfaced in output but never required as input.
+
+### Execution modes
+
+| Mode | When to use |
+|---|---|
+| (default) foreground | Running interactively. Blocks until done; auto-reviews. |
+| `--wait` | Calling from Claude with `Bash(run_in_background: true)`. Same as foreground but emits a 30-second heartbeat so the background bash never looks idle. |
+| `--background` | Long jobs you'll check on later via `/kimi:status`. Auto-review is skipped — use `/kimi:review plan.md` when it finishes. |
+| `--no-review` | Skip the auto-review chain (default chains review on success). |
+
+`--timeout-ms <N>` (or `KIMI_TIMEOUT_MS` env) caps any single Kimi invocation. Default is unlimited.
 
 ---
 
@@ -171,7 +177,13 @@ Each finding carries `severity` (`critical`/`high`/`medium`/`low`/`nit`), `confi
 
 The plugin is a thin Node 24 dispatcher (`runner.mjs`) that shells out to `kimi --print --afk`. There is no daemon, no broker, no IPC. Session continuity comes from kimi-cli's own `--continue` mechanism (per-cwd persistent sessions). Each `code` job gets a unique git worktree under `~/.kimi-plugin-cc/`, so Kimi cannot touch the user's working tree even by accident.
 
-Failure modes have explicit handling: kimi exit code 75 (rate limit / 5xx / timeout) triggers one retry; exit 0 with a `BLOCKED:` final line marks the job blocked rather than done; the Stop hook fails open on any internal error. The `Plan → Code → Review` boundary is enforced by separate Kimi sessions: the reviewer is always fresh-eyed, never resumed.
+Failure modes have explicit handling: kimi exit code 75 (rate limit / 5xx / timeout) triggers one retry; exit 0 with a `BLOCKED:` final line marks the job blocked rather than done; the Stop hook fails open on any internal error. The `Plan → Code → Review` boundary is enforced two ways: separate Kimi sessions (reviewer never resumed) **and** separate Kimi `--agent-file` profiles. The reviewer's profile excludes Shell, WriteFile, StrReplaceFile, the `Agent` tool, and web tools — read-only-ness is a Kimi-side constraint, not a prompt promise.
+
+## Worktree containment & post-run audit
+
+`/kimi:code` runs Kimi inside a worktree at `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` and passes `--work-dir` so Kimi's relative paths resolve there. After the run, the runner audits `stdout.jsonl` for any `WriteFile` / `StrReplaceFile` tool call whose `path` is absolute and not under that worktree. If found, the job is marked `blocked`, the violations are surfaced in `/kimi:status`, and the worktree is left for inspection but not auto-merged.
+
+This is _not_ a sandbox — `Shell` commands like `cat /etc/passwd` are still possible — but the worktree is throwaway, your real working tree is untouched, and the audit catches the most common write-escape attempts. For tighter isolation, run Claude Code itself inside a container.
 
 ---
 

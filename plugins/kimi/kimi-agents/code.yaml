@@ -1,0 +1,20 @@
+# Write-capable Kimi agent profile used by /kimi:code.
+#
+# Boundary model: write access is bounded by the worktree itself, not by an
+# allowlist inside this YAML. We pass `--work-dir <worktree>` so all relative
+# paths resolve there; absolute paths to elsewhere are detected post-run by the
+# runner and flagged as `blocked` if found.
+#
+# That makes the security story:
+#   1. Worktree is throwaway — Kimi can do anything inside, you discard it on cancel.
+#   2. Anything Kimi does to absolute paths outside the worktree is detected
+#      via post-run audit on stream-json events; the job is marked `blocked`
+#      and the worktree is destroyed.
+#
+# Subagent (`Agent`) is allowed: Kimi may spawn an `explore` subagent to read
+# code without writes. Web tools are allowed for looking up library docs.
+
+version: 1
+agent:
+  extend: default
+  name: kimi-plugin-cc-coder

@@ -9,16 +9,17 @@ description: Reference for invoking the kimi-cli binary correctly from this plug
 
 | Phase | Mode | Flags |
 |---|---|---|
-| Coding | non-interactive, structured | `--print --afk --output-format=stream-json --work-dir <worktree>` |
+| Coding | non-interactive, structured, write-capable agent | `--print --afk --output-format=stream-json --agent-file <code.yaml> --work-dir <worktree>` |
 | Resume coding | same + session continue | add `--continue` (cwd-based) |
-| Review (fresh) | non-interactive, plain | `--print --afk --quiet --work-dir <target>` |
+| Review (fresh) | non-interactive, plain text, read-only agent | `--print --afk --output-format=text --final-message-only --agent-file <review.yaml> --work-dir <target>` |
 
 ## Why these flags
 
 - `--print` — non-interactive; exits when the prompt is done.
 - `--afk` — auto-approves tool calls AND auto-dismisses `AskUserQuestion`. Background runs need this; otherwise Kimi may stall waiting for input nobody is watching.
 - `--output-format=stream-json` (coding only) — emits JSONL events; lets us tail tool calls and detect when work is happening.
-- `--quiet` (review only) — prints final assistant message only; cleaner output to parse for the `KIMI_REVIEW_JSON:` line.
+- `--final-message-only` (review only) — prints final assistant message only; cleaner output to parse for the `KIMI_REVIEW_JSON:` line.
+- `--agent-file <path>` — selects the Kimi agent profile. We ship two: `code.yaml` (write-capable, default tools) and `review.yaml` (excludes Shell, WriteFile, StrReplaceFile, Agent, web tools). The reviewer being read-only is enforced HERE, not in the prompt.
 - `--work-dir <path>` — pins the workspace. We always pass an absolute worktree path so kimi's session-per-cwd resume key is stable.
 - `--continue` — resume the most recent session in `<work-dir>`. Because each job has its own worktree, `--continue` is unambiguous.
 
