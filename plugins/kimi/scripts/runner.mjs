@@ -17,11 +17,13 @@ import {
 import {
   spawnKimi, waitForExit, runKimiWithRetry,
   buildCodeArgs, buildReviewArgs, probeKimi,
+  AGENT_FILES, parseKimiVersion, meetsMinKimi, MIN_KIMI,
 } from './lib/kimi.mjs';
 import {
   renderCodePrompt, renderReviewPrompt,
 } from './lib/prompts.mjs';
 import { gitDiff, gitDiffWorktreeAgainstBase } from './lib/git.mjs';
+import { auditStreamJson } from './lib/audit.mjs';
 import {
   ensureDir, writeJson, readJson, writeText, readText, pathExists,
 } from './lib/fs.mjs';
@@ -99,6 +101,20 @@ async function cmdDoctor(argv) {
   const kimi = await probeKimi();
   checks.push(['kimi-cli in PATH', kimi.code === 0, kimi.stdout || kimi.stderr || '(not found)']);
 
+  if (kimi.code === 0) {
+    const v = parseKimiVersion(kimi.stdout);
+    const ok = !!v && meetsMinKimi(v, MIN_KIMI);
+    const detail = v
+      ? `${v.raw} (need >= ${MIN_KIMI.major}.${MIN_KIMI.minor}.${MIN_KIMI.patch})`
+      : 'could not parse version string';
+    checks.push([`kimi >= ${MIN_KIMI.major}.${MIN_KIMI.minor}`, ok, detail]);
+  }
+
+  for (const [name, p] of Object.entries(AGENT_FILES)) {
+    const ok = await pathExists(p);
+    checks.push([`agent file: ${name}`, ok, ok ? p : '(missing — plugin install corrupted?)']);
+  }
+
   let inRepo = false;
   let ws = null;
   try {
@@ -162,8 +178,8 @@ async function writeConfig(ws, cfg) {
 
 async function cmdCode(argv) {
   const args = parseArgs(argv, {
-    flags: ['background', 'wait', 'fresh'],
-    opts: ['resume', 'model', 'effort'],
+    flags: ['background', 'wait', 'fresh', 'no-review'],
+    opts: ['resume', 'model', 'effort', 'timeout-ms', 'max-steps-per-turn'],
   });
   const planPath = args._[0];
   if (!planPath) {
@@ -175,10 +191,14 @@ async function cmdCode(argv) {
     return 2;
   }
 
+  const timeoutMs = readTimeout(args.opts['timeout-ms']);
+  const maxSteps = readPositiveInt(args.opts['max-steps-per-turn']);
+  const watch = !!args.flags.wait; // explicit name for "foreground with heartbeat"
+  const autoReview = !args.flags['no-review'];
+
   const { plan, raw } = await loadPlan(planPath);
   const ws = await workspaceFor(process.cwd());
 
-  // Decide resume vs fresh.
   let resumeOf = null;
   if (args.opts.resume) {
     const j = await readJob(ws, args.opts.resume);
@@ -235,19 +255,16 @@ async function cmdCode(argv) {
   const stdoutPath = join(dir, 'stdout.jsonl');
   const stderrPath = join(dir, 'stderr.log');
 
-  const buildArgs = () => {
-    const baseArgs = buildCodeArgs({
-      prompt,
-      workDir: wt.path,
-      resume: !!resumeOf,
-    });
-    // Pass-through flags: --model, --effort if set.
-    if (args.opts.model) baseArgs.unshift('--model', args.opts.model);
-    if (args.opts.effort) baseArgs.unshift('--effort', args.opts.effort);
-    return baseArgs;
-  };
+  const buildArgs = () => buildCodeArgs({
+    prompt,
+    workDir: wt.path,
+    resume: !!resumeOf,
+    model: args.opts.model,
+    effort: args.opts.effort,
+    maxStepsPerTurn: maxSteps,
+  });
 
-  // Background path.
+  // Background path: spawn detached and return immediately.
   if (args.flags.background) {
     const child = spawnKimi(buildArgs(), {
       cwd: wt.path,
@@ -268,31 +285,43 @@ async function cmdCode(argv) {
     console.log();
     console.log(`Check progress: ${c.bold(`/kimi:status ${jobId}`)}`);
     console.log(`Read result:    ${c.bold(`/kimi:result ${jobId}`)}`);
+    if (autoReview) {
+      console.log(c.dim('(auto-review will not run for background jobs; use /kimi:review ' + planPath + ' when done)'));
+    }
     return 0;
   }
 
-  // Foreground (default; --wait is an explicit alias).
+  // Foreground (default; --wait adds a heartbeat for run_in_background bash).
   console.log(c.cyan(`running kimi for job ${jobId}`));
   console.log(c.dim(`  plan:     ${plan.id} — ${plan.goal.split('\n')[0]}`));
   console.log(c.dim(`  worktree: ${wt.path}`));
   console.log(c.dim(`  base:     ${plan.base_branch}`));
+  if (timeoutMs) console.log(c.dim(`  timeout:  ${(timeoutMs / 1000) | 0}s`));
   await updateJob(ws, jobId, {
     status: 'running',
     started_at: new Date().toISOString(),
-    mode: 'foreground',
+    mode: watch ? 'watch' : 'foreground',
   });
 
-  const result = await runKimiWithRetry(buildArgs, {
+  const ctx = {
     cwd: wt.path,
     stdoutPath,
     stderrPath,
-  });
+  };
+  let stopHeartbeat = () => {};
+  if (watch) stopHeartbeat = startHeartbeat(jobId, stdoutPath);
 
-  // Determine outcome from kimi exit + last contract line.
+  const result = await runKimiWithRetry(buildArgs, ctx, { timeoutMs });
+  stopHeartbeat();
+
+  // Outcome.
   const tail = await tailFinalLine(stdoutPath);
   let status = 'failed';
   let exitReason = null;
-  if (result.code === 0) {
+  if (result.timed_out) {
+    status = 'failed';
+    exitReason = `timed out after ${timeoutMs}ms`;
+  } else if (result.code === 0) {
     status = tail?.startsWith('BLOCKED:') ? 'blocked' : 'done';
   } else if (result.code === 75) {
     status = 'failed_retryable';
@@ -301,13 +330,21 @@ async function cmdCode(argv) {
     exitReason = `kimi exited ${result.code}`;
   }
 
-  // Capture worktree diff against base for inspection.
+  // Post-run audit: did Kimi try to write outside the worktree?
+  let auditResult = { violations: [], events_seen: 0 };
+  try {
+    auditResult = await auditStreamJson(stdoutPath, wt.path);
+  } catch { /* tolerate audit failure */ }
+  if (status === 'done' && auditResult.violations.length > 0) {
+    status = 'blocked';
+    exitReason = `path-containment audit failed: ${auditResult.violations.length} write(s) outside worktree`;
+  }
+
+  // Capture diff for inspection.
   let diff = '';
   try {
     diff = await gitDiffWorktreeAgainstBase(wt.path, plan.base_branch);
-  } catch {
-    /* tolerate diff failure */
-  }
+  } catch { /* */ }
   if (diff) await writeText(join(dir, 'diff.patch'), diff);
 
   await updateJob(ws, jobId, {
@@ -317,20 +354,76 @@ async function cmdCode(argv) {
     contract_line: tail || null,
     finished_at: new Date().toISOString(),
     attempts: result.attempts,
+    timed_out: result.timed_out || false,
+    audit: auditResult,
+    failure_tail: status.startsWith('failed') ? await tailLines(stderrPath, 12) : null,
   });
 
   console.log();
   console.log(`${statusBadge(status)}  ${jobId}`);
   if (tail) console.log(c.dim('contract: ') + tail);
+  if (auditResult.violations.length > 0) {
+    console.log(c.red('audit:    ') + `${auditResult.violations.length} write(s) outside worktree (worktree marked blocked)`);
+    auditResult.violations.slice(0, 5).forEach((v) => {
+      console.log(c.red('  • ') + `${v.tool} → ${v.path}`);
+    });
+  }
   if (diff) {
     const fileCount = diff.split('\n').filter((l) => l.startsWith('diff --git ')).length;
     console.log(c.dim('diff:     ') + `${fileCount} file(s) changed → ${join(dir, 'diff.patch')}`);
   }
+
+  // Auto-chain review if successful.
+  if (status === 'done' && autoReview) {
+    console.log();
+    console.log(c.cyan('→ auto-review starting'));
+    const reviewArgs = ['--job', jobId, '--plan', resolve(planPath)];
+    if (timeoutMs) reviewArgs.push('--timeout-ms', String(timeoutMs));
+    if (watch) reviewArgs.push('--wait');
+    const reviewCode = await cmdReview(reviewArgs, { adversarial: false });
+    // Surface review verdict in the final exit code: pass-through review's code.
+    return reviewCode;
+  }
+
   console.log();
   console.log(`Inspect: ${c.bold(`/kimi:result ${jobId}`)}`);
-  console.log(`Review:  ${c.bold(`/kimi:review --job ${jobId}`)}`);
-
+  if (status === 'done' && !autoReview) {
+    console.log(`Review:  ${c.bold(`/kimi:review ${planPath}`)}`);
+  }
   return status === 'done' ? 0 : 1;
+}
+
+function readTimeout(raw) {
+  if (raw == null) {
+    const env = process.env.KIMI_TIMEOUT_MS;
+    if (!env) return null;
+    return readPositiveInt(env);
+  }
+  return readPositiveInt(raw);
+}
+
+function readPositiveInt(raw) {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.floor(n);
+}
+
+function startHeartbeat(jobId, stdoutPath) {
+  const startedAt = Date.now();
+  const interval = setInterval(async () => {
+    const elapsedSec = Math.floor((Date.now() - startedAt) / 1000);
+    let lastEvent = '';
+    try {
+      const tail = await tailLines(stdoutPath, 1);
+      const evt = JSON.parse(tail || '{}');
+      if (evt?.role === 'tool') lastEvent = `tool:${evt.tool_call_id || ''}`;
+      else if (evt?.role === 'assistant') lastEvent = 'assistant';
+    } catch { /* */ }
+    process.stdout.write(c.dim(`  · still running, ${elapsedSec}s${lastEvent ? ` (last: ${lastEvent})` : ''}\n`));
+  }, 30_000);
+  interval.unref?.();
+  return () => clearInterval(interval);
 }
 
 async function tailFinalLine(filePath) {
@@ -350,32 +443,71 @@ async function tailFinalLine(filePath) {
 async function cmdReview(argv, { adversarial }) {
   const args = parseArgs(argv, {
     flags: ['background', 'wait'],
-    opts: ['base', 'plan', 'job'],
+    opts: ['base', 'plan', 'job', 'model', 'effort', 'timeout-ms', 'max-steps-per-turn'],
   });
-  const focus = args._.join(' ').trim();
   const ws = await workspaceFor(process.cwd());
 
-  // Determine the diff source.
-  let workDir, baseRef, sourceLabel;
+  // Resolve target source. Priority order:
+  //   1. --job <id>            → that worktree vs its base branch
+  //   2. positional plan.md    → latest code job for that plan id
+  //   3. --plan <path> alone   → latest code job for that plan id
+  //   4. --base <ref>          → current repo vs ref
+  //   5. nothing               → current repo (uncommitted)
+  let workDir, baseRef, sourceLabel, jobIdRef = null;
   let planRaw = null;
+  let planPath = args.opts.plan ? resolve(args.opts.plan) : null;
+
+  // For non-adversarial review: if first positional ends with .md and file exists, treat as plan.
+  // For adversarial: same rule, remaining positionals become focus text.
+  let focusWords = [...args._];
+  if (focusWords.length && /\.md$/i.test(focusWords[0]) && (await pathExists(resolve(focusWords[0])))) {
+    planPath = resolve(focusWords.shift());
+  }
+  const focus = adversarial ? focusWords.join(' ').trim() : '';
+  if (!adversarial && focusWords.length > 0) {
+    console.error(c.red('error: ') + `unexpected arguments: ${focusWords.join(' ')}`);
+    return 2;
+  }
 
   if (args.opts.job) {
     const j = await readJob(ws, args.opts.job);
     if (!j) { console.error(c.red('unknown job: ') + args.opts.job); return 2; }
     workDir = j.worktree_path;
     baseRef = j.base_branch;
+    jobIdRef = j.job_id;
     sourceLabel = `job ${j.job_id} (${j.branch} vs ${baseRef})`;
-    if (j.plan_path && (await pathExists(j.plan_path))) {
-      planRaw = await readFile(j.plan_path, 'utf8');
+    if (j.plan_path && !planPath && (await pathExists(j.plan_path))) {
+      planPath = j.plan_path;
     }
+  } else if (planPath) {
+    // Look up latest code job for this plan id.
+    let parsed;
+    try { parsed = await loadPlan(planPath); }
+    catch (e) { console.error(c.red('plan error: ') + e.message); return 2; }
+    const planObj = parsed.plan;
+    const latest = await findLatestJobForPlan(ws, planObj.id);
+    if (!latest || latest.kind !== 'code') {
+      console.error(c.red('error: ') +
+        `no recent code job found for plan "${planObj.id}". Run /kimi:code ${planPath} first, or use /kimi:review --base <ref> for ad-hoc review.`);
+      return 2;
+    }
+    if (!(await pathExists(latest.worktree_path))) {
+      console.error(c.red('error: ') +
+        `latest job ${latest.job_id} has no worktree at ${latest.worktree_path}. It may have been cancelled.`);
+      return 2;
+    }
+    workDir = latest.worktree_path;
+    baseRef = latest.base_branch;
+    jobIdRef = latest.job_id;
+    sourceLabel = `latest job for "${planObj.id}" — ${latest.job_id}`;
   } else {
     workDir = ws.repoToplevel;
     baseRef = args.opts.base || null;
     sourceLabel = baseRef ? `current repo vs ${baseRef}` : 'current repo (uncommitted)';
   }
 
-  if (args.opts.plan) {
-    planRaw = await readFile(resolve(args.opts.plan), 'utf8');
+  if (planPath && !planRaw) {
+    planRaw = await readFile(planPath, 'utf8');
   }
 
   let diff = '';
@@ -392,9 +524,13 @@ async function cmdReview(argv, { adversarial }) {
     return 0;
   }
 
+  const timeoutMs = readTimeout(args.opts['timeout-ms']);
+  const maxSteps = readPositiveInt(args.opts['max-steps-per-turn']);
+  const watch = !!args.flags.wait;
+
   const kind = adversarial ? 'adversarial-review' : 'review';
-  const jobId = newJobId(args.opts.job || 'adhoc', kind);
-  const dir = jobDir(ws, jobId);
+  const reviewJobId = newJobId(jobIdRef || 'adhoc', kind);
+  const dir = jobDir(ws, reviewJobId);
   await ensureDir(dir);
 
   const prompt = await renderReviewPrompt({
@@ -407,12 +543,13 @@ async function cmdReview(argv, { adversarial }) {
   await writeText(join(dir, 'prompt.txt'), prompt);
   await writeText(join(dir, 'diff.patch'), diff);
 
-  await createJob(ws, jobId, {
+  await createJob(ws, reviewJobId, {
     kind,
     plan_id: null,
     base_branch: baseRef,
     target_dir: workDir,
-    related_job: args.opts.job || null,
+    related_job: jobIdRef,
+    plan_path: planPath || null,
     status: 'running',
     started_at: new Date().toISOString(),
   });
@@ -420,32 +557,54 @@ async function cmdReview(argv, { adversarial }) {
   const stdoutPath = join(dir, 'stdout.txt');
   const stderrPath = join(dir, 'stderr.log');
 
-  const buildArgs = () => buildReviewArgs({ prompt, workDir });
+  const buildArgs = () => buildReviewArgs({
+    prompt,
+    workDir,
+    model: args.opts.model,
+    effort: args.opts.effort,
+    maxStepsPerTurn: maxSteps,
+  });
 
   if (args.flags.background) {
     const child = spawnKimi(buildArgs(), { cwd: workDir, stdoutPath, stderrPath, detached: true });
-    await updateJob(ws, jobId, { pid: child.pid, mode: 'background' });
-    console.log(c.cyan('started background review:'), jobId);
-    console.log(`Read result: ${c.bold(`/kimi:result ${jobId}`)}`);
+    await updateJob(ws, reviewJobId, { pid: child.pid, mode: 'background' });
+    console.log(c.cyan('started background review:'), reviewJobId);
+    console.log(`Read result: ${c.bold(`/kimi:result ${reviewJobId}`)}`);
     return 0;
   }
 
   console.log(c.cyan(`running ${kind} on ${sourceLabel}`));
-  const result = await runKimiWithRetry(buildArgs, { cwd: workDir, stdoutPath, stderrPath });
+  if (timeoutMs) console.log(c.dim(`  timeout: ${(timeoutMs / 1000) | 0}s`));
+
+  let stopHeartbeat = () => {};
+  if (watch) stopHeartbeat = startHeartbeat(reviewJobId, stdoutPath);
+
+  const result = await runKimiWithRetry(
+    buildArgs,
+    { cwd: workDir, stdoutPath, stderrPath },
+    { timeoutMs },
+  );
+  stopHeartbeat();
 
   const out = (await readText(stdoutPath)).trim();
   const review = parseReviewOutput(out);
 
-  await updateJob(ws, jobId, {
-    status: result.code === 0 ? 'done' : 'failed',
+  await updateJob(ws, reviewJobId, {
+    status: result.timed_out
+      ? 'failed'
+      : result.code === 0
+        ? 'done'
+        : 'failed',
     exit_code: result.code,
+    timed_out: result.timed_out || false,
     finished_at: new Date().toISOString(),
-    verdict: review.verdict,
+    verdict: review.json?.verdict || null,
+    failure_tail: result.code !== 0 ? await tailLines(stderrPath, 12) : null,
   });
   if (review.json) await writeJson(join(dir, 'review.json'), review.json);
   await writeText(join(dir, 'review.md'), formatReviewMarkdown(review));
 
-  printReviewSummary(review, sourceLabel, jobId);
+  printReviewSummary(review, sourceLabel, reviewJobId);
 
   // Exit code reflects verdict so CI / hooks can branch on it.
   if (review.json?.verdict === 'block') return 2;

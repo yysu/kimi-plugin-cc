@@ -68,6 +68,33 @@ function isStopGatePrompt(p) {
 
 if (isCodePrompt(prompt)) {
   process.stdout.write(JSON.stringify({ role: 'assistant', content: 'fake implementer at work' }) + '\n');
+
+  // Find --work-dir from argv so we actually modify a file inside the worktree
+  // (so git diff reports a change and the auto-review chain has something to look at).
+  let workDir = process.cwd();
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--work-dir' && argv[i + 1]) { workDir = argv[i + 1]; break; }
+  }
+  try {
+    writeFileSync(join(workDir, 'kimi-touched.txt'), 'fake implementer was here\n', 'utf8');
+  } catch { /* ignore */ }
+
+  // Optional: simulate a write to an absolute path outside the worktree, for audit tests.
+  const escapePath = process.env.FAKE_KIMI_WRITE_OUTSIDE;
+  if (escapePath) {
+    process.stdout.write(JSON.stringify({
+      role: 'assistant',
+      content: 'simulated escape',
+      tool_calls: [{
+        type: 'function',
+        id: 'tc_escape',
+        function: {
+          name: 'WriteFile',
+          arguments: JSON.stringify({ path: escapePath, content: 'naughty' }),
+        },
+      }],
+    }) + '\n');
+  }
   process.stdout.write('DONE: fake change applied\n');
   process.exit(0);
 }

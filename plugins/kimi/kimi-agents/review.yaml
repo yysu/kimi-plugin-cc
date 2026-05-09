@@ -1,0 +1,22 @@
+# Read-only Kimi agent profile used by /kimi:review and /kimi:adversarial-review.
+#
+# The reviewer's read-only-ness is enforced HERE, on the Kimi side, not via prompt.
+# Even if the reviewer were tempted to edit, the tools simply aren't loaded.
+#
+# Loaded via `kimi --agent-file <abs-path-to-this-file>`. Schema docs:
+#   https://moonshotai.github.io/kimi-cli/en/customization/agents.html
+
+version: 1
+agent:
+  extend: default
+  name: kimi-plugin-cc-reviewer
+  exclude_tools:
+    # No code-mutating tools.
+    - "kimi_cli.tools.shell:Shell"
+    - "kimi_cli.tools.file:WriteFile"
+    - "kimi_cli.tools.file:StrReplaceFile"
+    # No subagent spawning — reviewer must not delegate to a tool that *can* write.
+    - "kimi_cli.tools.agent:Agent"
+    # No web fetching — keep the reviewer grounded in the diff and codebase only.
+    - "kimi_cli.tools.web:SearchWeb"
+    - "kimi_cli.tools.web:FetchURL"

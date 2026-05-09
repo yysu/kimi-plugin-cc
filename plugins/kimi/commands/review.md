@@ -1,17 +1,20 @@
 ---
-description: Run a Kimi code review on the current changes or a job's worktree.
-argument-hint: "[--base <ref>] [--plan <plan.md>] [--job <job-id>] [--background] [--wait]"
+description: Run a Kimi code review. Pass plan.md to review the latest code job for that plan.
+argument-hint: "[<plan.md>] [--base <ref>] [--job <job-id>] [--plan <path>] [--background] [--wait] [--timeout-ms <N>]"
 ---
 
-Selecting what to review (the runner handles this; just forward the args):
+Target selection (the runner handles all of this; just forward args):
 
-- `--job <id>` → review the diff inside that job's worktree against its base branch.
-- `--base <ref>` → review the current repo's diff against `<ref>` (e.g. `main`).
-- Neither → review uncommitted changes in the current working tree.
+- **Positional `plan.md`** (recommended): looks up the latest `/kimi:code` job for that plan id and reviews its worktree. This is how Claude should call review after delegating a code job.
+- `--job <id>`: review that specific job's worktree.
+- `--base <ref>`: review the current repo's diff against `<ref>` (e.g. `main`).
+- (none): review uncommitted changes in the current working tree.
 
-If the user provides `--plan <path>`, the reviewer uses the plan's `success_criteria`, `out_of_scope`, and `files_may_touch` as the rubric.
+If `--plan <path>` is provided (or a plan was passed positionally), the reviewer uses `success_criteria`, `out_of_scope`, and `files_may_touch` as the rubric.
 
-Review runs in a **fresh Kimi session** (never resumed). Reviewer should be cold-eyed.
+Review always runs in a **fresh Kimi session**. The reviewer is fresh-eyed.
+
+The reviewer is also enforced read-only at the Kimi level via a custom `--agent-file` — Shell, WriteFile, and StrReplaceFile tools are stripped, so the reviewer cannot mutate code even if asked.
 
 Forward to the runner:
 
@@ -19,4 +22,4 @@ Forward to the runner:
 node "${CLAUDE_PLUGIN_ROOT}/scripts/runner.mjs" review $ARGUMENTS
 ```
 
-Return the runner's stdout as-is.
+Return the runner's stdout as-is. The exit code reflects the verdict: `0` (pass), `1` (needs-attention), `2` (block) — useful for CI and chained commands.
