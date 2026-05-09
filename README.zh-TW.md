@@ -108,7 +108,7 @@ $ cat plan.md
 $ git merge kimi/<job-id>
 ```
 
-`plan.md` 是你唯一需要記得的握手物。Job ID 會印在輸出裡，但你**永遠不需要當輸入餵回去**。
+`plan.md` 是你主要使用的識別物。雖然 Job ID 會印在輸出中，但大部分操作（如審查）都可以直接透過 `plan.md` 完成，減少手動輸入 ID 的需求。
 
 ### 執行模式
 
@@ -183,7 +183,7 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 
 ## Worktree 容納 + 後審查
 
-`/kimi:code` 在 `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` 跑 Kimi，並透過 `--work-dir` 讓 Kimi 的相對路徑都解析到那裡。跑完後，runner 會掃 `stdout.jsonl` 找有沒有任何 `WriteFile` / `StrReplaceFile` 工具呼叫指到 worktree 外。任何路徑（含 `../../etc/x` 這種越界）都會被 resolve 成最終實際位置再做容納檢查。發現越界就把 job 標成 `blocked`，違規清單會顯示在 `/kimi:status`，worktree 留著給你檢查、不會自動 merge。
+`/kimi:code` 在 `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` 跑 Kimi，並透過 `--work-dir` 讓 Kimi 的相對路徑都解析到那裡。跑完後，runner 會掃 `stdout.jsonl` 找有沒有任何 `WriteFile` / `StrReplaceFile` 工具呼叫指到 worktree 外。任何路徑（含 `../../etc/x` 這種越界）都會被 resolve 成最終實際位置再做容納檢查。發現越界就把 job 標成 `blocked`，錯誤原因會顯示在 `/kimi:status`，worktree 留著給你檢查、不會自動 merge。
 
 這**不是 sandbox**——`Shell` 還是可以下 `cat /etc/passwd`——但 worktree 本來就是用完即丟，你的真正 working tree 完全不受影響，後審查能擋下最常見的寫入越界。要更緊的隔離，請把 Claude Code 整個跑在 container 裡。
 
