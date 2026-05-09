@@ -89,6 +89,35 @@ test('review with positional plan but no prior code job: clear error', async () 
   } finally { await cleanup(scratch); }
 });
 
+test('code --resume (no id): auto-resumes the latest job for the plan', async () => {
+  const scratch = await tmpScratch();
+  try {
+    const repo = await makeRepo(scratch, { 'src/util.js': 'x\n' });
+    const planPath = join(repo, 'plan.md');
+    await writeFile(planPath, SAMPLE_PLAN, 'utf8');
+    const stateDir = join(scratch, 'state');
+
+    const first = await runRunner(['code', planPath, '--no-review'], { cwd: repo, stateDir });
+    assert.equal(first.code, 0);
+
+    const resumed = await runRunner(['code', planPath, '--resume', '--no-review'], { cwd: repo, stateDir });
+    assert.equal(resumed.code, 0, `stderr: ${resumed.stderr}\nstdout: ${resumed.stdout}`);
+    assert.match(resumed.stdout, /● done/);
+  } finally { await cleanup(scratch); }
+});
+
+test('code --resume on plan with no prior job: clear error', async () => {
+  const scratch = await tmpScratch();
+  try {
+    const repo = await makeRepo(scratch, { 'src/util.js': 'x\n' });
+    const planPath = join(repo, 'plan.md');
+    await writeFile(planPath, SAMPLE_PLAN, 'utf8');
+    const r = await runRunner(['code', planPath, '--resume'], { cwd: repo, stateDir: join(scratch, 'state') });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /no previous code job/);
+  } finally { await cleanup(scratch); }
+});
+
 test('audit: write outside worktree marks job blocked', async () => {
   const scratch = await tmpScratch();
   try {

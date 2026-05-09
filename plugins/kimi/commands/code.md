@@ -1,6 +1,6 @@
 ---
 description: Delegate a coding task to Kimi. Auto-materializes a plan from conversation if none was passed, then auto-reviews on success.
-argument-hint: "[<plan.md>] [--background] [--wait] [--no-review] [--resume <job-id>] [--fresh] [--model <name>] [--effort low|medium|high] [--timeout-ms <N>]"
+argument-hint: "[<plan.md>] [--background] [--wait] [--no-review] [--resume] [--fresh] [--model <name>] [--effort low|medium|high] [--timeout-ms <N>]"
 ---
 
 This command delegates a coding job to Kimi, then automatically chains a Kimi review on success. The plan markdown is the contract for both phases.
@@ -53,6 +53,7 @@ This is the path Claude takes when the user says things like "hand it to Kimi" w
 
 ## Other rules
 
+- `--resume` (no value) auto-resumes the most recent code job for the plan id. The job id is never required as input.
 - `--resume` and `--fresh` are mutually exclusive; refuse if both are present.
 - If the user passed neither `--resume` nor `--fresh` and a previous job exists for the same plan id in this repo: ask once whether to continue or start fresh, then forward with the chosen flag.
 - `--background` skips auto-review (the runner already prints how to review later).

@@ -180,8 +180,22 @@ async function writeConfig(ws, cfg) {
 // ─── code ────────────────────────────────────────────────────────────────
 
 async function cmdCode(argv) {
-  const args = parseArgs(argv, {
-    flags: ['background', 'wait', 'fresh', 'no-review'],
+  // Pre-process: support `--resume` with no value (auto-pick latest job for this plan).
+  // If `--resume` is the last arg or followed by another flag, treat it as a flag.
+  const argv2 = [];
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--resume') {
+      const next = argv[i + 1];
+      if (next == null || next.startsWith('-')) {
+        argv2.push('--resume-latest');
+        continue;
+      }
+    }
+    argv2.push(argv[i]);
+  }
+
+  const args = parseArgs(argv2, {
+    flags: ['background', 'wait', 'fresh', 'no-review', 'resume-latest'],
     opts: ['resume', 'model', 'effort', 'timeout-ms', 'max-steps-per-turn'],
   });
   const planPath = args._[0];
@@ -189,7 +203,7 @@ async function cmdCode(argv) {
     console.error(c.red('error: ') + '`code` requires a plan path. Example: node runner.mjs code plan.md');
     return 2;
   }
-  if (args.opts.resume && args.flags.fresh) {
+  if ((args.opts.resume || args.flags['resume-latest']) && args.flags.fresh) {
     console.error(c.red('error: ') + '--resume and --fresh are mutually exclusive');
     return 2;
   }
@@ -203,7 +217,15 @@ async function cmdCode(argv) {
   const ws = await workspaceFor(process.cwd());
 
   let resumeOf = null;
-  if (args.opts.resume) {
+  if (args.flags['resume-latest']) {
+    const latest = await findLatestJobForPlan(ws, plan.id);
+    if (!latest || latest.kind !== 'code') {
+      console.error(c.red('error: ') +
+        `no previous code job for plan "${plan.id}". Drop --resume to start fresh.`);
+      return 2;
+    }
+    resumeOf = latest;
+  } else if (args.opts.resume) {
     const j = await readJob(ws, args.opts.resume);
     if (!j) {
       console.error(c.red('error: ') + `no job with id ${args.opts.resume}`);

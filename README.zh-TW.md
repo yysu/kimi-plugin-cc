@@ -51,39 +51,9 @@
 
 ---
 
-## 計畫書（plan）格式
+## Plan 契約
 
-計畫書是一份附帶 YAML frontmatter 的 markdown 檔，本身就是契約：`/kimi:code` 沒拿到計畫書就拒跑，`/kimi:review` 會拿計畫書的欄位當審查依據。
-
-```yaml
----
-id: add-google-login                  # 必填，slug。會當成 job id 跟 branch 名稱用。
-goal: |                                # 必填。
-  加入 Google OAuth 登入流程，含 session cookie。
-base_branch: main                      # 必填。
-files_may_touch:                       # 必填，至少 1 條 glob。reviewer 會檢查有沒有越界。
-  - src/auth/**
-  - src/routes/login.ts
-  - tests/auth/**
-out_of_scope:                          # 必填，可給空陣列。明示哪些事不要做。
-  - 重構既有的 session middleware
-  - UI 重新設計
-success_criteria:                      # 必填，至少 1 條。reviewer 的驗收 rubric。
-  - tests/auth/ 底下所有測試通過
-  - 使用者可以完成端到端登入
-  - 沒有新的 ESLint warning
-constraints:                           # 選填。
-  - 不引入新的執行期套件
-notes_for_kimi: |                      # 選填，自由格式上下文。
-  OAuth client id 環境變數叫 GOOGLE_OAUTH_CLIENT_ID。
----
-
-# 背景描述
-
-frontmatter 下面的 markdown body 也會一起傳給 Kimi。
-```
-
-Schema 在 `plugins/kimi/schemas/plan.schema.json`。
+你通常**不需要自己寫 plan**——`/kimi:code` 會從對話結晶出來、印給你看、等你確認。完整 schema 在 [`plugins/kimi/schemas/plan.schema.json`](./plugins/kimi/schemas/plan.schema.json)，必填欄位是：`id`、`goal`、`base_branch`、`files_may_touch`、`out_of_scope`、`success_criteria`。reviewer 用這幾個當 rubric，所以你在驗收 Claude 自動寫的 plan 時，重點就是看這些欄位有沒有寫對。
 
 ---
 
@@ -106,7 +76,8 @@ Schema 在 `plugins/kimi/schemas/plan.schema.json`。
 #    → 印出 verdict（pass / needs-attention / block），exit code 0/1/2
 
 # 3. 對照 review 回饋繼續修
-/kimi:code <第 2 步印出的 plan 路徑> --resume <job-id>
+#    --resume 不用填 job id，會自動接該 plan 最近的 job。
+/kimi:code <第 2 步印出的 plan 路徑> --resume
 
 # 4. 滿意了？自己把 worktree branch merge 回主線
 $ git merge kimi/<job-id>
@@ -201,14 +172,6 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 
 ---
 
-## 為什麼**不**裝 broker？
-
-`kimi-cli` 本身就把 session 寫到磁碟，提供 `kimi --continue` 跟 `kimi --resume <id>`。一個常駐 broker 頂多省 1–3 秒冷啟動，但代價是一堆難 debug 的失敗模式（stale socket、zombie、broker 一掛所有 job 連坐、單 broker 變瓶頸）。每次 one-shot CLI 呼叫反而更簡單、平行友善、crash 也是局部的。
-
-外掛裡的 `runKimiWithRetry()` 是預留好的接縫——將來真要塞 broker 就在這替換，不會動到 plan/worktree/review 那層。
-
----
-
 ## 開發
 
 ```sh
@@ -225,7 +188,7 @@ npm run bump 0.2.0
 
 ## 致謝
 
-設計過程參考了 `MoonshotAI/kimi-cli` 公開的 CLI 介面，以及 `openai/codex-plugin-cc` 所示範的 Claude Code 外掛模式。本 repo 程式碼皆為原創，未複製上述兩個專案的任何原始碼。
+設計過程參考了 `MoonshotAI/kimi-cli` 公開的 CLI 介面，以及 `openai/codex-plugin-cc` 所示範的 Claude Code 外掛模式。
 
 ## 授權
 

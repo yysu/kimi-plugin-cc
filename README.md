@@ -51,39 +51,9 @@ Then verify:
 
 ---
 
-## The plan format
+## The plan contract
 
-A plan is a markdown file with YAML frontmatter. It is a binding contract: `/kimi:code` refuses to run without one, and `/kimi:review` uses its fields as the rubric.
-
-```yaml
----
-id: add-google-login                  # required, slug. used as job/branch name.
-goal: |                                # required.
-  Add Google OAuth login flow with session cookie.
-base_branch: main                      # required.
-files_may_touch:                       # required, ≥ 1 glob. reviewer flags anything outside.
-  - src/auth/**
-  - src/routes/login.ts
-  - tests/auth/**
-out_of_scope:                          # required. empty array allowed.
-  - Refactor existing session middleware
-  - UI redesign
-success_criteria:                      # required, ≥ 1. reviewer's rubric.
-  - All tests in tests/auth/ pass
-  - User can complete login flow end-to-end
-  - No new ESLint warnings
-constraints:                           # optional.
-  - No new runtime dependencies
-notes_for_kimi: |                      # optional, freeform context.
-  The OAuth client_id env var is GOOGLE_OAUTH_CLIENT_ID.
----
-
-# Background
-
-Free-form markdown below the frontmatter is also passed to Kimi.
-```
-
-Schema: `plugins/kimi/schemas/plan.schema.json`.
+You usually don't write a plan by hand — `/kimi:code` will compose one from the conversation and show it to you for confirmation. The full schema is at [`plugins/kimi/schemas/plan.schema.json`](./plugins/kimi/schemas/plan.schema.json) and the required fields are: `id`, `goal`, `base_branch`, `files_may_touch`, `out_of_scope`, `success_criteria`. The reviewer uses these as its rubric, so when you're reviewing the auto-composed plan, those are the fields worth scrutinizing.
 
 ---
 
@@ -107,7 +77,8 @@ The plain conversational path — no plan file needed up front:
 #    → prints the verdict (pass / needs-attention / block) and exit code 0/1/2
 
 # 3. Iterate on review feedback in the same worktree.
-/kimi:code <plan-path-from-step-2> --resume <job-id>
+#    --resume (no value) auto-picks the latest job for that plan.
+/kimi:code <plan-path-from-step-2> --resume
 
 # 4. Happy with it? Merge the worktree branch back yourself.
 $ git merge kimi/<job-id>
@@ -202,14 +173,6 @@ This is _not_ a sandbox — `Shell` commands like `cat /etc/passwd` are still po
 
 ---
 
-## Why _not_ a broker?
-
-`kimi-cli` already persists sessions to disk and supports `kimi --continue` and `kimi --resume <id>`. A long-lived broker process would only save ~1–3s of cold-start per call — not worth the failure modes (stale sockets, zombie processes, broker crash → all jobs lost, single-broker bottleneck). One-shot CLI calls are simpler, more parallel-friendly, and survive crashes gracefully.
-
-The plugin's `runKimiWithRetry()` is the seam where a broker could be reintroduced if that calculus ever changes.
-
----
-
 ## Development
 
 ```sh
@@ -226,7 +189,7 @@ The test suite is built on `node --test` and a fake `kimi` binary on `PATH`. CI 
 
 ## Acknowledgments
 
-This plugin was designed after studying the public APIs and structure of `MoonshotAI/kimi-cli`, and inspired by the Claude Code plugin pattern as it appears in `openai/codex-plugin-cc`. Code is original to this repository; no source from those projects was copied.
+This plugin was designed after studying the public APIs and structure of `MoonshotAI/kimi-cli`, and inspired by the Claude Code plugin pattern as it appears in `openai/codex-plugin-cc`.
 
 ## License
 
