@@ -1,5 +1,7 @@
 # kimi-plugin-cc
 
+**English** · [繁體中文](./README.zh-TW.md)
+
 A Claude Code plugin that turns Kimi into your **delegate**: Claude plans, Kimi codes inside an isolated git worktree, then Kimi reviews its own (or anyone else's) diff against the plan.
 
 > **Why this plugin exists**
