@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises';
 import * as fsp from 'node:fs/promises';
 
 import { parseArgs } from './lib/args.mjs';
-import { loadPlan, PlanError } from './lib/plan.mjs';
+import { loadPlan, parsePlan, PlanError } from './lib/plan.mjs';
 import { workspaceFor, jobDir, worktreePath } from './lib/workspace.mjs';
 import { createWorktree, destroyWorktree } from './lib/worktree.mjs';
 import {
@@ -40,6 +40,7 @@ const SUBCOMMANDS = {
   status: cmdStatus,
   result: cmdResult,
   cancel: cmdCancel,
+  plan: cmdPlan,
 };
 
 async function main() {
@@ -74,6 +75,7 @@ Usage: node runner.mjs <subcommand> [args]
 
 Subcommands:
   doctor [--enable-review-gate | --disable-review-gate]
+  plan write [--slug <slug>]   (reads plan markdown from stdin; writes to plans dir; prints path)
   code <plan.md> [--background] [--wait] [--resume <job-id>] [--fresh]
                  [--model <name>] [--effort low|medium|high]
   review            [--base <ref>] [--plan <path>] [--job <id>] [--background] [--wait]
@@ -888,6 +890,78 @@ async function findRunningJob(ws) {
     if (fresh?.status === 'running') return fresh;
   }
   return null;
+}
+
+// ─── plan ────────────────────────────────────────────────────────────────
+
+async function cmdPlan(argv) {
+  const action = argv[0];
+  if (action !== 'write') {
+    console.error(c.red('error: ') + 'usage: plan write [--slug <slug>] [--allow-overwrite]');
+    return 2;
+  }
+  const args = parseArgs(argv.slice(1), {
+    flags: ['allow-overwrite'],
+    opts: ['slug'],
+  });
+
+  const ws = await workspaceFor(process.cwd());
+  const planMarkdown = await readAllStdin();
+  if (!planMarkdown.trim()) {
+    console.error(c.red('error: ') + 'plan body must be supplied via stdin');
+    return 2;
+  }
+
+  // Validate by parsing — refuse to write malformed plans.
+  let parsed;
+  try {
+    parsed = parsePlan(planMarkdown);
+  } catch (e) {
+    console.error(c.red('plan error: ') + e.message);
+    return 2;
+  }
+  const slug = args.opts.slug || parsed.plan.id;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+    console.error(c.red('error: ') +
+      'invalid slug — must match ^[a-z0-9][a-z0-9-]{0,63}$ (lowercase letters, digits, hyphens; max 64 chars)');
+    return 2;
+  }
+  const ts = timestampSlug();
+  const filename = `${slug}-${ts}.md`;
+  const target = join(ws.plansDir, filename);
+
+  if (!args.flags['allow-overwrite'] && await pathExists(target)) {
+    console.error(c.red('error: ') + `plan already exists at ${target}`);
+    return 2;
+  }
+  await writeText(target, planMarkdown.endsWith('\n') ? planMarkdown : planMarkdown + '\n');
+  console.log(target);
+  return 0;
+}
+
+async function readAllStdin() {
+  if (process.stdin.isTTY) return '';
+  process.stdin.setEncoding('utf8');
+  let buf = '';
+  // Async iteration surfaces stream errors as exceptions, so partial reads
+  // become observable failures instead of silently returning a truncated body.
+  for await (const chunk of process.stdin) {
+    buf += chunk;
+  }
+  return buf;
+}
+
+function timestampSlug(now = new Date()) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+  ].join('') + '-' + [
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds()),
+  ].join('');
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────

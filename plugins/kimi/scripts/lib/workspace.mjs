@@ -31,10 +31,12 @@ export async function workspaceFor(cwd) {
     repoStateDir: repoState,
     jobsDir: join(repoState, 'jobs'),
     worktreesDir: join(repoState, 'worktrees'),
+    plansDir: join(repoState, 'plans'),
     configFile: join(repoState, 'config.json'),
   };
   await ensureDir(ws.jobsDir);
   await ensureDir(ws.worktreesDir);
+  await ensureDir(ws.plansDir);
   return ws;
 }
 

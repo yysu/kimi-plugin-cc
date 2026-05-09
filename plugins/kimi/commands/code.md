@@ -1,30 +1,60 @@
 ---
-description: Delegate a coding task to Kimi. Requires plan.md (YAML frontmatter). Auto-reviews when done.
-argument-hint: "<plan.md> [--background] [--wait] [--no-review] [--resume <job-id>] [--fresh] [--model <name>] [--effort low|medium|high] [--timeout-ms <N>]"
+description: Delegate a coding task to Kimi. Auto-materializes a plan from conversation if none was passed, then auto-reviews on success.
+argument-hint: "[<plan.md>] [--background] [--wait] [--no-review] [--resume <job-id>] [--fresh] [--model <name>] [--effort low|medium|high] [--timeout-ms <N>]"
 ---
 
-This command **requires** a plan file. The plan is the contract between Claude (planner) and Kimi (implementer).
+This command delegates a coding job to Kimi, then automatically chains a Kimi review on success. The plan markdown is the contract for both phases.
 
-After Kimi finishes successfully, **the runner automatically chains a Kimi review** in a fresh session. Pass `--no-review` to opt out.
+## Decide whether a plan path was given
 
-**Flag semantics:**
-- `--background`: detach Kimi, return immediately. No auto-review (run `/kimi:review <plan.md>` later when done).
-- `--wait`: foreground with a 30s heartbeat; recommended when Claude calls this with `Bash(run_in_background: true)`.
-- (default): foreground, silent until done, then auto-review.
+Inspect `$ARGUMENTS`. If the first non-flag token is a path that ends in `.md` and the file exists, treat it as the plan path. Otherwise: **no plan path** — go to the auto-materialization branch below.
 
-If the user passed `--resume` and `--fresh` together: refuse, those are mutually exclusive.
+## Branch A — plan path given
 
-If the user passed neither `--resume` nor `--fresh`, and a previous job exists for the same plan id in this repo:
-- Ask once: "Continue job `<id>` (last run <when>) or start fresh?" → map to `--resume <id>` or `--fresh`.
+Just forward, including all other flags, in exactly one Bash call:
 
-If the user did not pass a plan path:
-- Stop. Tell them: "`/kimi:code` requires a plan file. Write one (YAML frontmatter + markdown body) and pass its path."
-- Show the schema at `${CLAUDE_PLUGIN_ROOT}/schemas/plan.schema.json` if they want a template.
-
-Forward to the runner in exactly one Bash call:
-
-```
+```bash
 node "${CLAUDE_PLUGIN_ROOT}/scripts/runner.mjs" code $ARGUMENTS
 ```
 
-Return the runner's stdout as-is. Do not poll, do not summarize. The runner prints the job id, the contract line, the diff summary, and (when auto-review runs) the verdict.
+Return the runner's stdout as-is.
+
+## Branch B — no plan path (auto-materialize)
+
+This is the path Claude takes when the user says things like "hand it to Kimi" without writing a plan file first.
+
+1. **Compose a plan** from the current conversation. Same rules as `/kimi:plan` (see that command's instructions): YAML frontmatter with all required fields, derived slug, plus a markdown body with background and suggested approach.
+
+2. **Show the plan inline** in chat so the user can read every field before any code is delegated.
+
+3. **Ask for explicit confirmation.** A brief question — "OK to delegate to Kimi? (y / edits)" — and wait for the user's reply.
+
+4. On affirmative confirmation, materialize the plan via the runner:
+
+   ```bash
+   cat <<'PLAN' | node "${CLAUDE_PLUGIN_ROOT}/scripts/runner.mjs" plan write
+   ---
+   …frontmatter…
+   ---
+
+   …body…
+   PLAN
+   ```
+
+   Capture the printed absolute path. Call it `$PLAN_PATH`.
+
+5. Forward to the runner with that path, preserving any other flags the user passed:
+
+   ```bash
+   node "${CLAUDE_PLUGIN_ROOT}/scripts/runner.mjs" code "$PLAN_PATH" <other flags>
+   ```
+
+6. If the user pushes back on the plan (asks for edits), revise it and re-show. Do not invoke the runner until the user confirms.
+
+## Other rules
+
+- `--resume` and `--fresh` are mutually exclusive; refuse if both are present.
+- If the user passed neither `--resume` nor `--fresh` and a previous job exists for the same plan id in this repo: ask once whether to continue or start fresh, then forward with the chosen flag.
+- `--background` skips auto-review (the runner already prints how to review later).
+- `--no-review` opts out of auto-review.
+- Return the runner's stdout as-is. Do not poll or summarize.
