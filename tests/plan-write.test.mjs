@@ -70,6 +70,34 @@ test('plan write: --slug overrides id-based filename', async () => {
   } finally { await cleanup(scratch); }
 });
 
+test('plan write: rejects path-traversal slug', async () => {
+  const scratch = await tmpScratch();
+  try {
+    const repo = await makeRepo(scratch, { 'README': 'x\n' });
+    const r = await runRunnerStdin(['plan', 'write', '--slug', '../../../tmp/evil'], {
+      cwd: repo,
+      stateDir: join(scratch, 'state'),
+      stdin: SAMPLE_PLAN,
+    });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /invalid slug/);
+  } finally { await cleanup(scratch); }
+});
+
+test('plan write: rejects slug with invalid chars', async () => {
+  const scratch = await tmpScratch();
+  try {
+    const repo = await makeRepo(scratch, { 'README': 'x\n' });
+    const r = await runRunnerStdin(['plan', 'write', '--slug', 'Has Spaces!'], {
+      cwd: repo,
+      stateDir: join(scratch, 'state'),
+      stdin: SAMPLE_PLAN,
+    });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /invalid slug/);
+  } finally { await cleanup(scratch); }
+});
+
 test('plan write: empty stdin is rejected', async () => {
   const scratch = await tmpScratch();
   try {

@@ -921,6 +921,11 @@ async function cmdPlan(argv) {
     return 2;
   }
   const slug = args.opts.slug || parsed.plan.id;
+  if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(slug)) {
+    console.error(c.red('error: ') +
+      'invalid slug — must match ^[a-z0-9][a-z0-9-]{0,63}$ (lowercase letters, digits, hyphens; max 64 chars)');
+    return 2;
+  }
   const ts = timestampSlug();
   const filename = `${slug}-${ts}.md`;
   const target = join(ws.plansDir, filename);
@@ -934,15 +939,16 @@ async function cmdPlan(argv) {
   return 0;
 }
 
-function readAllStdin() {
-  return new Promise((resolve) => {
-    if (process.stdin.isTTY) return resolve('');
-    let buf = '';
-    process.stdin.setEncoding('utf8');
-    process.stdin.on('data', (chunk) => { buf += chunk; });
-    process.stdin.on('end', () => resolve(buf));
-    process.stdin.on('error', () => resolve(buf));
-  });
+async function readAllStdin() {
+  if (process.stdin.isTTY) return '';
+  process.stdin.setEncoding('utf8');
+  let buf = '';
+  // Async iteration surfaces stream errors as exceptions, so partial reads
+  // become observable failures instead of silently returning a truncated body.
+  for await (const chunk of process.stdin) {
+    buf += chunk;
+  }
+  return buf;
 }
 
 function timestampSlug(now = new Date()) {
