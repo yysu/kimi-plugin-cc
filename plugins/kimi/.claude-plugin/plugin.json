@@ -1,0 +1,9 @@
+{
+  "name": "kimi",
+  "version": "0.1.0",
+  "description": "Plan → Code → Review pipeline for Claude Code, delegating to Kimi via kimi-cli.",
+  "author": {
+    "name": "yysu"
+  },
+  "homepage": "https://github.com/yysu/kimi-plugin-cc"
+}

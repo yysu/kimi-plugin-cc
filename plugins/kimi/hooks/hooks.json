@@ -1,0 +1,16 @@
+{
+  "description": "Stop-hook review gate. Disabled by default; toggle via /kimi:setup --enable-review-gate.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-gate-hook.mjs\"",
+            "timeout": 900
+          }
+        ]
+      }
+    ]
+  }
+}

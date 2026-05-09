@@ -1,0 +1,109 @@
+#!/usr/bin/env node
+// Fake kimi-cli for tests. Reads its argv to decide what to emit.
+//
+// Behavior:
+//   --version                 → print fake version, exit 0
+//   --print -p "<prompt>"     → respond based on prompt content:
+//                                 - if prompt contains "<role>\nYou are an implementer"
+//                                   → emit "DONE: fake change"
+//                                 - if prompt contains "<role>\nYou are a senior code reviewer"
+//                                   or "adversarial reviewer"
+//                                   → emit a valid KIMI_REVIEW_JSON line
+//                                 - if prompt contains "<task>\nDecide whether the most recent"
+//                                   → emit "ALLOW: nothing concerning" by default
+//                                   (override via FAKE_KIMI_GATE=block)
+//   FAKE_KIMI_EXIT=N          → exit N regardless of inputs
+//   FAKE_KIMI_RETRY_ONCE=1    → exit 75 the first call, 0 on subsequent calls
+//                                 (uses a tmpfile counter under FAKE_KIMI_STATE)
+
+import { writeFileSync, readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+
+const argv = process.argv.slice(2);
+
+if (argv.includes('--version')) {
+  process.stdout.write('kimi 9.9.9-fake\n');
+  process.exit(0);
+}
+
+// retry-once mode
+if (process.env.FAKE_KIMI_RETRY_ONCE === '1') {
+  const stateDir = process.env.FAKE_KIMI_STATE || '/tmp';
+  const counterPath = join(stateDir, 'fake-kimi-retry-counter');
+  let n = 0;
+  if (existsSync(counterPath)) n = Number(readFileSync(counterPath, 'utf8')) || 0;
+  n += 1;
+  writeFileSync(counterPath, String(n), 'utf8');
+  if (n === 1) {
+    process.stderr.write('fake-kimi: simulating retryable error\n');
+    process.exit(75);
+  }
+  // fall through to normal behavior on second call
+}
+
+if (process.env.FAKE_KIMI_EXIT) {
+  const code = Number(process.env.FAKE_KIMI_EXIT);
+  process.exit(Number.isFinite(code) ? code : 1);
+}
+
+// Find the prompt: kimi expects "-p <text>" or "--prompt <text>"
+let prompt = '';
+for (let i = 0; i < argv.length; i++) {
+  if (argv[i] === '-p' || argv[i] === '--prompt') {
+    prompt = argv[i + 1] || '';
+    break;
+  }
+}
+
+function isCodePrompt(p) {
+  return p.includes('You are an implementer agent');
+}
+function isReviewPrompt(p) {
+  return p.includes('You are a senior code reviewer') ||
+         p.includes('You are an adversarial reviewer');
+}
+function isStopGatePrompt(p) {
+  return p.includes('Decide whether the most recent Claude turn');
+}
+
+if (isCodePrompt(prompt)) {
+  process.stdout.write(JSON.stringify({ role: 'assistant', content: 'fake implementer at work' }) + '\n');
+  process.stdout.write('DONE: fake change applied\n');
+  process.exit(0);
+}
+
+if (isReviewPrompt(prompt)) {
+  const verdict = process.env.FAKE_KIMI_VERDICT || 'pass';
+  const findings = [];
+  if (verdict === 'block') {
+    findings.push({
+      severity: 'critical',
+      title: 'simulated critical issue',
+      body: 'fake-kimi was asked to block',
+      confidence: 0.9,
+    });
+  }
+  const json = {
+    verdict,
+    summary: `fake reviewer says: ${verdict}`,
+    findings,
+    scope_check: { files_outside_whitelist: [], out_of_scope_violations: [], missing_criteria: [] },
+    next_steps: [],
+  };
+  process.stdout.write('reasoning trace...\n');
+  process.stdout.write('KIMI_REVIEW_JSON: ' + JSON.stringify(json) + '\n');
+  process.exit(0);
+}
+
+if (isStopGatePrompt(prompt)) {
+  const mode = process.env.FAKE_KIMI_GATE || 'allow';
+  if (mode === 'block') {
+    process.stdout.write('BLOCK: fake gate flagged something\n');
+  } else {
+    process.stdout.write('ALLOW: nothing concerning in the diff\n');
+  }
+  process.exit(0);
+}
+
+// Unknown / no prompt → just succeed quietly.
+process.exit(0);

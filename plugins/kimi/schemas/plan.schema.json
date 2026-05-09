@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yysu/kimi-plugin-cc/schemas/plan.schema.json",
+  "title": "Kimi delegation plan",
+  "description": "YAML frontmatter contract that /kimi:code and /kimi:review consume.",
+  "type": "object",
+  "required": [
+    "id",
+    "goal",
+    "base_branch",
+    "files_may_touch",
+    "out_of_scope",
+    "success_criteria"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$",
+      "description": "Slug used for job-id, branch name, and worktree dir. Lowercase, digits, hyphens. Max 64 chars."
+    },
+    "goal": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One- to few-sentence statement of what 'done' means."
+    },
+    "base_branch": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Branch the worktree is created from."
+    },
+    "files_may_touch": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Glob whitelist. Reviewer flags any change outside this set."
+    },
+    "out_of_scope": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Things explicitly NOT to do. Empty array allowed but field required."
+    },
+    "success_criteria": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "minItems": 1,
+      "description": "Verifiable conditions. Reviewer uses these as the rubric."
+    },
+    "constraints": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "notes_for_kimi": {
+      "type": "string"
+    }
+  }
+}

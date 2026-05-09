@@ -1,0 +1,17 @@
+{
+  "name": "kimi-plugin-cc",
+  "owner": {
+    "name": "yysu",
+    "url": "https://github.com/yysu"
+  },
+  "metadata": {
+    "description": "Plan-Code-Review pipeline plugin: Claude plans, Kimi codes, Kimi reviews."
+  },
+  "plugins": [
+    {
+      "name": "kimi",
+      "source": "./plugins/kimi",
+      "description": "Delegate Plan → Code → Review work to Kimi via kimi-cli, with worktree isolation and structured review output."
+    }
+  ]
+}
