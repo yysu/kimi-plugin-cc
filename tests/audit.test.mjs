@@ -77,6 +77,27 @@ test('audit: absolute path OUTSIDE worktree is flagged', async () => {
   } finally { await cleanup(scratch); }
 });
 
+test('audit: relative `..` traversal escaping worktree is flagged', async () => {
+  const scratch = await tmpScratch();
+  try {
+    const wt = join(scratch, 'wt');
+    await mkdir(wt, { recursive: true });
+    const log = join(scratch, 'stdout.jsonl');
+    const evt = {
+      role: 'assistant',
+      tool_calls: [{
+        type: 'function',
+        id: 'sneaky',
+        function: { name: 'WriteFile', arguments: JSON.stringify({ path: '../../etc/sneaky' }) },
+      }],
+    };
+    await writeFile(log, JSON.stringify(evt) + '\n');
+    const r = await auditStreamJson(log, wt);
+    assert.equal(r.violations.length, 1, 'relative ../.. traversal must be detected');
+    assert.equal(r.violations[0].path, '../../etc/sneaky');
+  } finally { await cleanup(scratch); }
+});
+
 test('audit: ignores non-write tool calls', async () => {
   const scratch = await tmpScratch();
   try {

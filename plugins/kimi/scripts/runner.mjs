@@ -5,6 +5,7 @@
 import { join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
+import * as fsp from 'node:fs/promises';
 
 import { parseArgs } from './lib/args.mjs';
 import { loadPlan, PlanError } from './lib/plan.mjs';
@@ -818,10 +819,36 @@ async function cmdResult(argv) {
   return 0;
 }
 
-async function tailLines(path, n) {
-  const txt = await readText(path);
-  const lines = txt.split('\n');
-  return lines.slice(-n).join('\n');
+async function tailLines(path, n, { maxBytes = 16384 } = {}) {
+  // Efficient tail: stat the file, open, read only the trailing window. Avoids
+  // O(file size) work per call — important for the watch-mode heartbeat that
+  // hits this every 30 seconds while stdout.jsonl is being appended.
+  let fh, stat;
+  try {
+    fh = await fsp.open(path, 'r');
+    stat = await fh.stat();
+  } catch {
+    if (fh) await fh.close().catch(() => {});
+    return '';
+  }
+  try {
+    const size = stat.size;
+    if (size === 0) return '';
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    const buf = Buffer.allocUnsafe(length);
+    await fh.read(buf, 0, length, start);
+    let text = buf.toString('utf8');
+    // If we may have started mid-line, drop the leading partial line.
+    if (start > 0) {
+      const nl = text.indexOf('\n');
+      if (nl >= 0) text = text.slice(nl + 1);
+    }
+    const lines = text.split('\n');
+    return lines.slice(-n).join('\n');
+  } finally {
+    await fh.close().catch(() => {});
+  }
 }
 
 // ─── cancel ──────────────────────────────────────────────────────────────
