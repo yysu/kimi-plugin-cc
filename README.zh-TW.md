@@ -2,7 +2,7 @@
 
 [English](./README.md) · **繁體中文**
 
-一個給 Claude Code 用的外掛：把 Kimi 變成你的 **執行代理人**——Claude 負責規劃，Kimi 在隔離的 git worktree 裡寫 code，然後再用一個全新的 Kimi session 對著計畫書審查 diff。
+一個給 Claude Code 用的外掛：把 Kimi 變成你的 **執行代理人**——Claude 負責規劃，Kimi 在隔離的 git worktree 裡寫 code，然後再用一個全新的 Kimi session 對照計畫書審查 diff。
 
 > **為什麼要做這個外掛**
 >
@@ -170,7 +170,7 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 
 ## 兩段話講完架構
 
-外掛是一個輕量的 Node 24 dispatcher（`runner.mjs`），對外就是 `kimi --print --afk` 的 shell 呼叫。沒有 daemon、沒有 broker、沒有 IPC。會話延續用 kimi-cli 自己提供的 `--continue`（依 cwd 持久化的 session）。每一個 `code` job 都會拿到一個位於 `~/.kimi-plugin-cc/` 底下的獨立 worktree，所以 Kimi 連手滑碰到你 working tree 的可能都沒有。
+外掛是一個輕量的 Node 24 dispatcher（`runner.mjs`），其運作方式是透過 `kimi --print --afk` 的 shell 呼叫。沒有 daemon、沒有 broker、沒有 IPC。會話延續用 kimi-cli 自己提供的 `--continue`（依 cwd 持久化的 session）。每一個 `code` job 都會拿到一個位於 `~/.kimi-plugin-cc/` 底下的獨立 worktree，所以 Kimi 連手滑碰到你 working tree 的可能都沒有。
 
 失敗模式都明文處理：kimi exit code 75（rate limit / 5xx / timeout）會自動重試一次；exit 0 但最後一行是 `BLOCKED:` 會被標成 `blocked` 而不是 `done`；Stop hook 任何內部錯誤一律放行。`Plan → Code → Review` 的邊界靠分離 Kimi session 強制——reviewer 永遠是新人視角，從來不接續 coder。
 
@@ -178,9 +178,9 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 
 ## 為什麼**不**裝 broker？
 
-`kimi-cli` 本身就把 session 寫到磁碟，提供 `kimi --continue` 跟 `kimi --resume <id>`。一個常駐 broker 頂多省 1–3 秒冷啟動，但代價是一堆難 debug 的失敗模式（stale socket、zombie、broker 一掛所有 job 連坐、單 broker 變瓶頸）。每次 one-shot CLI 呼叫反而更簡單、更平行、crash 也是局部的。
+`kimi-cli` 本身就把 session 寫到磁碟，提供 `kimi --continue` 跟 `kimi --resume <id>`。一個常駐 broker 頂多省 1–3 秒冷啟動，但代價是一堆難 debug 的失敗模式（stale socket、zombie、broker 一掛所有 job 連坐、單 broker 變瓶頸）。每次 one-shot CLI 呼叫反而更簡單、平行友善、crash 也是局部的。
 
-外掛裡的 `runKimiWithRetry()` 是預留好的縫——將來真要塞 broker 就在這替換，不會動到 plan/worktree/review 那層。
+外掛裡的 `runKimiWithRetry()` 是預留好的接縫——將來真要塞 broker 就在這替換，不會動到 plan/worktree/review 那層。
 
 ---
 
