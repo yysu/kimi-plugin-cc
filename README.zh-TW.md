@@ -14,9 +14,9 @@
 
 | 指令 | 用途 |
 |---|---|
-| `/kimi:doctor` | 檢查 `kimi-cli`、`git`、Node 環境，並切換 review gate 開關。 |
-| `/kimi:code <plan.md>` | 在新 worktree 裡叫 Kimi 依照 plan 實作。 |
-| `/kimi:review` | 讓 Kimi 審 diff（目前未提交的變更、跟某 base branch 的差異、或某個 job 的 worktree）。 |
+| `/kimi:doctor` | 檢查 `kimi-cli`、`git`、Node、Kimi 最低版本，並切換 review gate 開關。 |
+| `/kimi:code <plan.md>` | 在新 worktree 裡叫 Kimi 依照 plan 實作，**完成後自動接 review**。要關掉自動審查就加 `--no-review`。 |
+| `/kimi:review [<plan.md>]` | 讓 Kimi 審 diff。傳 `plan.md` 進去就會自動找該 plan 最新的 code job 來審；不傳就審當下未提交的變更。 |
 | `/kimi:adversarial-review` | 同樣的目標選擇邏輯，但姿態變成「找碴模式」（安全 / 正確性壓力測試）。 |
 | `/kimi:status` / `/kimi:result` / `/kimi:cancel` | 管理進行中與已結束的 job。 |
 
@@ -89,30 +89,37 @@ Schema 在 `plugins/kimi/schemas/plan.schema.json`。
 ## 一個典型流程
 
 ```text
-# 1. 你跟 Claude 一起寫計畫書（不需要任何工具，就是個 .md）
+# 1. 你跟 Claude 一起寫計畫書（就是一個 .md 檔）
 $ cat plan.md
 
-# 2. 把計畫書交給 Kimi
+# 2. 把計畫書交出去。一條指令做完 plan → code → review。
 /kimi:code plan.md
 
 #    → 在 ~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job> 開 worktree
-#    → 在裡面跑 kimi --print --afk
-#    → 抓 diff 跟最後一行 DONE: / BLOCKED: 契約
+#    → Kimi（write-capable agent profile）在裡面實作
+#    → 跑完後審查：檢查所有寫入都沒越界跑出 worktree
+#    → 自動用 Kimi（read-only agent profile）審 diff
+#    → 印出 verdict（pass / needs-attention / block），exit code 對應 0/1/2
 
-# 3. 讓 Kimi 審自己的 code
-/kimi:review --job <job-id>
-
-#    → 全新 Kimi session（絕不接續 coder 的 context）
-#    → 輸出結構化 JSON 裁決（pass / needs-attention / block）
-
-# 4. 對照 review 回饋在同一個 worktree 繼續修
+# 3. 對照 review 回饋在同一個 worktree 繼續修
 /kimi:code plan.md --resume <job-id>
 
-# 5. 滿意了？自己把 worktree branch merge 回主線，用你習慣的方式
+# 4. 滿意了？自己把 worktree branch merge 回主線
 $ git merge kimi/<job-id>
 ```
 
-長任務加 `--background`，再用 `/kimi:status` 追進度。
+`plan.md` 是你唯一需要記得的握手物。Job ID 會印在輸出裡，但你**永遠不需要當輸入餵回去**。
+
+### 執行模式
+
+| 模式 | 什麼時候用 |
+|---|---|
+| （預設）foreground | 互動使用。卡住等到完成；自動接 review。 |
+| `--wait` | 從 Claude 用 `Bash(run_in_background: true)` 呼叫時。跟預設一樣會等到完成，但會每 30 秒輸出一次心跳，不讓背景 bash 看起來卡死。 |
+| `--background` | 長任務。馬上回 prompt，之後用 `/kimi:status` 追。**自動審查不會跑**——完工後請用 `/kimi:review plan.md`。 |
+| `--no-review` | 跳過自動審查鏈（預設 code 跑完會接 review）。 |
+
+`--timeout-ms <N>`（或 `KIMI_TIMEOUT_MS` 環境變數）可以對單次 Kimi 呼叫設上限，預設無限。
 
 ---
 
@@ -172,7 +179,13 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 
 外掛是一個輕量的 Node 24 dispatcher（`runner.mjs`），其運作方式是透過 `kimi --print --afk` 的 shell 呼叫。沒有 daemon、沒有 broker、沒有 IPC。會話延續用 kimi-cli 自己提供的 `--continue`（依 cwd 持久化的 session）。每一個 `code` job 都會拿到一個位於 `~/.kimi-plugin-cc/` 底下的獨立 worktree，所以 Kimi 連手滑碰到你 working tree 的可能都沒有。
 
-失敗模式都明文處理：kimi exit code 75（rate limit / 5xx / timeout）會自動重試一次；exit 0 但最後一行是 `BLOCKED:` 會被標成 `blocked` 而不是 `done`；Stop hook 任何內部錯誤一律放行。`Plan → Code → Review` 的邊界靠分離 Kimi session 強制——reviewer 永遠是新人視角，從來不接續 coder。
+失敗模式都明文處理：kimi exit code 75（rate limit / 5xx / timeout）會自動重試一次；exit 0 但最後一行是 `BLOCKED:` 會被標成 `blocked` 而不是 `done`；Stop hook 任何內部錯誤一律放行。`Plan → Code → Review` 的邊界用兩種方式強制：分離 Kimi session（reviewer 從來不接續 coder）**加上**分離 Kimi `--agent-file` profile。reviewer 的 profile 排除了 Shell、WriteFile、StrReplaceFile、`Agent` 工具跟 web 工具——read-only 是 Kimi 端的工具邊界，不是 prompt 上的口頭保證。
+
+## Worktree 容納 + 後審查
+
+`/kimi:code` 在 `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` 跑 Kimi，並透過 `--work-dir` 讓 Kimi 的相對路徑都解析到那裡。跑完後，runner 會掃 `stdout.jsonl` 找有沒有任何 `WriteFile` / `StrReplaceFile` 工具呼叫指到 worktree 外。任何路徑（含 `../../etc/x` 這種越界）都會被 resolve 成最終實際位置再做容納檢查。發現越界就把 job 標成 `blocked`，違規清單會顯示在 `/kimi:status`，worktree 留著給你檢查、不會自動 merge。
+
+這**不是 sandbox**——`Shell` 還是可以下 `cat /etc/passwd`——但 worktree 本來就是用完即丟，你的真正 working tree 完全不受影響，後審查能擋下最常見的寫入越界。要更緊的隔離，請把 Claude Code 整個跑在 container 裡。
 
 ---
 
