@@ -15,7 +15,8 @@
 | 指令 | 用途 |
 |---|---|
 | `/kimi:doctor` | 檢查 `kimi-cli`、`git`、Node、Kimi 最低版本，並切換 review gate 開關。 |
-| `/kimi:code <plan.md>` | 在新 worktree 裡叫 Kimi 依照 plan 實作，**完成後自動接 review**。要關掉自動審查就加 `--no-review`。 |
+| `/kimi:plan` | 把當前對話結晶成結構化的 `plan.md`、驗證、寫到 per-repo 的 plans 目錄、印出路徑。**不會跑 Kimi**。 |
+| `/kimi:code [<plan.md>]` | 在新 worktree 裡叫 Kimi 依照 plan 實作，**完成後自動接 review**。**不傳路徑時**，Claude 會自己從當前對話起一份 plan、給你看一眼、確認後才動工。`--no-review` 關自動審查。 |
 | `/kimi:review [<plan.md>]` | 讓 Kimi 審 diff。傳 `plan.md` 進去就會自動找該 plan 最新的 code job 來審；不傳就審當下未提交的變更。 |
 | `/kimi:adversarial-review` | 同樣的目標選擇邏輯，但姿態變成「找碴模式」（安全 / 正確性壓力測試）。 |
 | `/kimi:status` / `/kimi:result` / `/kimi:cancel` | 管理進行中與已結束的 job。 |
@@ -88,24 +89,34 @@ Schema 在 `plugins/kimi/schemas/plan.schema.json`。
 
 ## 一個典型流程
 
+純對話流程——不用先寫 plan 檔：
+
 ```text
-# 1. 你跟 Claude 一起寫計畫書（就是一個 .md 檔）
-$ cat plan.md
+# 1. 跟 Claude 在 chat 裡討論你想做什麼。不需要先寫檔案。
 
-# 2. 把計畫書交出去。一條指令做完 plan → code → review。
-/kimi:code plan.md
+# 2. 交出去。
+/kimi:code
 
-#    → 在 ~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job> 開 worktree
+#    → Claude 把對話結晶成 plan，貼出來給你看
+#    → 你確認後才動工：plan 落地到 ~/.kimi-plugin-cc/state/<hash>/plans/
+#    → 在 ~/.kimi-plugin-cc/state/<hash>/worktrees/<job> 開 worktree
 #    → Kimi（write-capable agent profile）在裡面實作
-#    → 跑完後審查：檢查所有寫入都沒越界跑出 worktree
+#    → 跑完後審查：檢查寫入都沒越界跑出 worktree
 #    → 自動用 Kimi（read-only agent profile）審 diff
-#    → 印出 verdict（pass / needs-attention / block），exit code 對應 0/1/2
+#    → 印出 verdict（pass / needs-attention / block），exit code 0/1/2
 
-# 3. 對照 review 回饋在同一個 worktree 繼續修
-/kimi:code plan.md --resume <job-id>
+# 3. 對照 review 回饋繼續修
+/kimi:code <第 2 步印出的 plan 路徑> --resume <job-id>
 
 # 4. 滿意了？自己把 worktree branch merge 回主線
 $ git merge kimi/<job-id>
+```
+
+如果你想先看 plan 落地後再下指令動 code：
+
+```text
+/kimi:plan        # 寫 plan、印出路徑、停在這
+/kimi:code <印出的路徑>
 ```
 
 `plan.md` 是你主要使用的識別物。雖然 Job ID 會印在輸出中，但大部分操作（如審查）都可以直接透過 `plan.md` 完成，減少手動輸入 ID 的需求。
@@ -138,6 +149,7 @@ $ git merge kimi/<job-id>
     review.json       # 解析過的 review payload（review 任務）
     review.md         # 給人看的 review 報告
   worktrees/<job-id>/ # 真正的 git worktree
+  plans/<slug>-<ts>.md # /kimi:plan 或自動 fallback 寫出來的 plan
   config.json         # 此 repo 的外掛設定（如 review_gate_enabled）
 ```
 

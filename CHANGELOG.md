@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Plan auto-materialization**: `/kimi:code` no longer requires a plan path. When called without one, Claude composes a plan from the current conversation, shows it for confirmation, then materializes it via `runner plan write` before delegating. Plans land under `~/.kimi-plugin-cc/state/<repo-hash>/plans/<slug>-<ts>.md` so the caller's repo stays clean.
+- **`/kimi:plan` command**: explicit "write a plan from this conversation" entrypoint. Same composition rules as the auto-fallback, but stops after writing — useful when you want to inspect/edit before delegating.
+- **`runner plan write` subcommand**: reads plan markdown from stdin, validates it against the schema, writes to the per-repo plans dir, prints the absolute path. `--slug <s>` overrides the filename prefix.
 - **Auto-review chain**: `/kimi:code` now runs `/kimi:review` automatically after a successful code phase. Pass `--no-review` to opt out. Exit code propagates the review verdict.
 - **Plan-as-handoff for review**: `/kimi:review <plan.md>` (positional) looks up the latest code job for that plan id and reviews its worktree. Job ids are no longer needed as input.
 - **Kimi `--agent-file` per command**: review and adversarial-review run with a Kimi agent profile that excludes Shell, WriteFile, StrReplaceFile, web tools, and the Agent tool — read-only is enforced on the Kimi side, not via prompt.

@@ -15,7 +15,8 @@ A Claude Code plugin that turns Kimi into your **delegate**: Claude plans, Kimi 
 | Command | Purpose |
 |---|---|
 | `/kimi:doctor` | Check `kimi-cli`, `git`, Node, kimi minimum version, and toggle the optional review gate. |
-| `/kimi:code <plan.md>` | Run Kimi inside a fresh worktree to implement a plan, then **auto-chain a review**. Pass `--no-review` to opt out. |
+| `/kimi:plan` | Distill the current conversation into a structured `plan.md`, validate it, write it to the per-repo plans dir, and print its path. Doesn't run Kimi. |
+| `/kimi:code [<plan.md>]` | Run Kimi inside a fresh worktree to implement a plan, then **auto-chain a review**. If no plan path is given, Claude composes one from the current conversation, shows it for confirmation, then proceeds. `--no-review` opts out of the review chain. |
 | `/kimi:review [<plan.md>]` | Kimi reviews a diff. Pass `plan.md` to review the latest code job for that plan; otherwise reviews uncommitted changes. |
 | `/kimi:adversarial-review` | Same target selection, security/correctness-pressure-test posture. |
 | `/kimi:status` / `/kimi:result` / `/kimi:cancel` | Manage running and completed jobs. |
@@ -88,24 +89,35 @@ Schema: `plugins/kimi/schemas/plan.schema.json`.
 
 ## A typical run
 
+The plain conversational path — no plan file needed up front:
+
 ```text
-# 1. You and Claude write a plan together. (Just a markdown file.)
-$ cat plan.md
+# 1. Talk through what you want with Claude in chat. No file required.
 
-# 2. Hand the plan off. ONE command does plan → code → review.
-/kimi:code plan.md
+# 2. Hand off.
+/kimi:code
 
-#    → opens a worktree at ~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job>
+#    → Claude distills the conversation into a structured plan
+#    → Claude prints the plan inline and asks you to confirm
+#    → on confirm: plan is materialized to ~/.kimi-plugin-cc/state/<hash>/plans/
+#    → opens a worktree at ~/.kimi-plugin-cc/state/<hash>/worktrees/<job>
 #    → Kimi (write-capable agent profile) implements the plan inside it
 #    → post-run audit checks no writes escaped the worktree
 #    → automatically runs Kimi (read-only agent profile) to review the diff
 #    → prints the verdict (pass / needs-attention / block) and exit code 0/1/2
 
 # 3. Iterate on review feedback in the same worktree.
-/kimi:code plan.md --resume <job-id>
+/kimi:code <plan-path-from-step-2> --resume <job-id>
 
 # 4. Happy with it? Merge the worktree branch back yourself.
 $ git merge kimi/<job-id>
+```
+
+Or if you want to see the plan settle on disk before any code runs:
+
+```text
+/kimi:plan        # writes plan, prints path, stops
+/kimi:code <printed-path>
 ```
 
 `plan.md` is the only handoff artifact you ever need to remember. Job ids are surfaced in output but never required as input.
@@ -138,6 +150,7 @@ Everything Kimi-related is **outside your repo**:
     review.json       # parsed review payload (review jobs)
     review.md         # human-readable review
   worktrees/<job-id>/ # the actual git worktree
+  plans/<slug>-<ts>.md # plans materialized by /kimi:plan or auto-fallback
   config.json         # per-repo plugin config (e.g. review_gate_enabled)
 ```
 
