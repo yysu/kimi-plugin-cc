@@ -53,39 +53,28 @@ Then verify:
 
 ---
 
-## The plan format
+## Uninstall
 
-A plan is a markdown file with YAML frontmatter. It is a binding contract: `/kimi:code` refuses to run without one, and `/kimi:review` uses its fields as the rubric.
+**CLI (recommended — more reliable than the TUI):**
 
-```yaml
----
-id: add-google-login                  # required, slug. used as job/branch name.
-goal: |                                # required.
-  Add Google OAuth login flow with session cookie.
-base_branch: main                      # required.
-files_may_touch:                       # required, ≥ 1 glob. reviewer flags anything outside.
-  - src/auth/**
-  - src/routes/login.ts
-  - tests/auth/**
-out_of_scope:                          # required. empty array allowed.
-  - Refactor existing session middleware
-  - UI redesign
-success_criteria:                      # required, ≥ 1. reviewer's rubric.
-  - All tests in tests/auth/ pass
-  - User can complete login flow end-to-end
-  - No new ESLint warnings
-constraints:                           # optional.
-  - No new runtime dependencies
-notes_for_kimi: |                      # optional, freeform context.
-  The OAuth client_id env var is GOOGLE_OAUTH_CLIENT_ID.
----
-
-# Background
-
-Free-form markdown below the frontmatter is also passed to Kimi.
+```bash
+claude plugin uninstall kimi@kimi-plugin-cc
 ```
 
-Schema: `plugins/kimi/schemas/plan.schema.json`.
+**In-chat (TUI):**
+
+```text
+/plugin uninstall kimi
+/reload-plugins
+```
+
+> ⚠️ The `/plugin uninstall` TUI has [known issues](https://github.com/anthropics/claude-code/issues/52456) where the plugin may reappear after restart. If that happens, use the CLI command above.
+
+State files (jobs, worktrees, plans) live under `~/.kimi-plugin-cc/`. Remove it for a full cleanup:
+
+```sh
+rm -rf ~/.kimi-plugin-cc
+```
 
 ---
 
@@ -201,14 +190,6 @@ Failure modes have explicit handling: kimi exit code 75 (rate limit / 5xx / time
 `/kimi:code` runs Kimi inside a worktree at `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` and passes `--work-dir` so Kimi's relative paths resolve there. After the run, the runner audits `stdout.jsonl` for any `WriteFile` / `StrReplaceFile` tool call whose `path` is absolute and not under that worktree. If found, the job is marked `blocked`, the violations are surfaced in `/kimi:status`, and the worktree is left for inspection but not auto-merged.
 
 This is _not_ a sandbox — `Shell` commands like `cat /etc/passwd` are still possible — but the worktree is throwaway, your real working tree is untouched, and the audit catches the most common write-escape attempts. For tighter isolation, run Claude Code itself inside a container.
-
----
-
-## Why _not_ a broker?
-
-`kimi-cli` already persists sessions to disk and supports `kimi --continue` and `kimi --resume <id>`. A long-lived broker process would only save ~1–3s of cold-start per call — not worth the failure modes (stale sockets, zombie processes, broker crash → all jobs lost, single-broker bottleneck). One-shot CLI calls are simpler, more parallel-friendly, and survive crashes gracefully.
-
-The plugin's `runKimiWithRetry()` is the seam where a broker could be reintroduced if that calculus ever changes.
 
 ---
 

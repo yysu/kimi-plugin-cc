@@ -53,39 +53,28 @@
 
 ---
 
-## 計畫書（plan）格式
+## 移除
 
-計畫書是一份附帶 YAML frontmatter 的 markdown 檔，本身就是契約：`/kimi:code` 沒拿到計畫書就拒跑，`/kimi:review` 會拿計畫書的欄位當審查依據。
+**CLI（建議——比 TUI 更可靠）：**
 
-```yaml
----
-id: add-google-login                  # 必填，slug。會當成 job id 跟 branch 名稱用。
-goal: |                                # 必填。
-  加入 Google OAuth 登入流程，含 session cookie。
-base_branch: main                      # 必填。
-files_may_touch:                       # 必填，至少 1 條 glob。reviewer 會檢查有沒有越界。
-  - src/auth/**
-  - src/routes/login.ts
-  - tests/auth/**
-out_of_scope:                          # 必填，可給空陣列。明示哪些事不要做。
-  - 重構既有的 session middleware
-  - UI 重新設計
-success_criteria:                      # 必填，至少 1 條。reviewer 的驗收 rubric。
-  - tests/auth/ 底下所有測試通過
-  - 使用者可以完成端到端登入
-  - 沒有新的 ESLint warning
-constraints:                           # 選填。
-  - 不引入新的執行期套件
-notes_for_kimi: |                      # 選填，自由格式上下文。
-  OAuth client id 環境變數叫 GOOGLE_OAUTH_CLIENT_ID。
----
-
-# 背景描述
-
-frontmatter 下面的 markdown body 也會一起傳給 Kimi。
+```bash
+claude plugin uninstall kimi@kimi-plugin-cc
 ```
 
-Schema 在 `plugins/kimi/schemas/plan.schema.json`。
+**對話內（TUI）：**
+
+```text
+/plugin uninstall kimi
+/reload-plugins
+```
+
+> ⚠️ `/plugin uninstall` TUI 有[已知問題](https://github.com/anthropics/claude-code/issues/52456)，plugin 可能會在重啟後重新出現。若遇到此狀況，請改用上方 CLI 指令。
+
+State 檔案（jobs、worktrees、plans）會留在 `~/.kimi-plugin-cc/`。若想完整清理：
+
+```sh
+rm -rf ~/.kimi-plugin-cc
+```
 
 ---
 
@@ -200,14 +189,6 @@ Schema 在 `plugins/kimi/schemas/review-output.schema.json`。runner 退出碼�
 `/kimi:code` 在 `~/.kimi-plugin-cc/state/<repo-hash>/worktrees/<job-id>/` 跑 Kimi，並透過 `--work-dir` 讓 Kimi 的相對路徑都解析到那裡。跑完後，runner 會掃 `stdout.jsonl` 找有沒有任何 `WriteFile` / `StrReplaceFile` 工具呼叫指到 worktree 外。任何路徑（含 `../../etc/x` 這種越界）都會被 resolve 成最終實際位置再做容納檢查。發現越界就把 job 標成 `blocked`，錯誤原因會顯示在 `/kimi:status`，worktree 留著給你檢查、不會自動 merge。
 
 這**不是 sandbox**——`Shell` 還是可以下 `cat /etc/passwd`——但 worktree 本來就是用完即丟，你的真正 working tree 完全不受影響，後審查能擋下最常見的寫入越界。要更緊的隔離，請把 Claude Code 整個跑在 container 裡。
-
----
-
-## 為什麼**不**裝 broker？
-
-`kimi-cli` 本身就把 session 寫到磁碟，提供 `kimi --continue` 跟 `kimi --resume <id>`。一個常駐 broker 頂多省 1–3 秒冷啟動，但代價是一堆難 debug 的失敗模式（stale socket、zombie、broker 一掛所有 job 連坐、單 broker 變瓶頸）。每次 one-shot CLI 呼叫反而更簡單、平行友善、crash 也是局部的。
-
-外掛裡的 `runKimiWithRetry()` 是預留好的接縫——將來真要塞 broker 就在這替換，不會動到 plan/worktree/review 那層。
 
 ---
 
