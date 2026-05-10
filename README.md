@@ -6,7 +6,9 @@ A Claude Code plugin that turns Kimi into your **delegate**: Claude plans, Kimi 
 
 > **Why this plugin exists**
 >
-> Claude is great at planning and conversation; Kimi is great at heads-down coding. This plugin makes the handoff explicit: a structured `plan.md` is the contract, a worktree is the workspace, and a JSON-schema'd review is the verdict. Your main repo is never touched while Kimi works.
+> Claude is great at planning and conversation; Kimi is great at heads-down coding — and meaningfully cheaper per token, which adds up fast when implementation and review burn through context. So you get the best of both: keep Claude in its sweet spot, hand the token-heavy work over to Kimi.
+>
+> This plugin makes the handoff explicit: a structured `plan.md` is the contract, a worktree is the workspace, and a JSON-schema'd review is the verdict. Your main repo is never touched while Kimi works.
 
 ---
 

@@ -6,7 +6,9 @@
 
 > **為什麼要做這個外掛**
 >
-> Claude 擅長規劃跟對話，Kimi 擅長埋頭寫 code。這個外掛把交接做成明確的契約：一份結構化的 `plan.md` 是規格、一個 worktree 是工作區、一份遵守 JSON schema 的 review 是裁決。Kimi 動工的時候，你的主 repo 一個檔案都不會被碰到。
+> Claude 擅長規劃跟對話，Kimi 擅長埋頭寫 code——而且 token 單價便宜得多，對「實作 + 審查」這種會狂吃 context 的工作差很多。所以這個外掛讓你兩邊都拿好處：Claude 留在它最擅長的事上，把吃 token 的活交給 Kimi。
+>
+> 這個外掛把交接做成明確的契約：一份結構化的 `plan.md` 是規格、一個 worktree 是工作區、一份遵守 JSON schema 的 review 是裁決。Kimi 動工的時候，你的主 repo 一個檔案都不會被碰到。
 
 ---
 
